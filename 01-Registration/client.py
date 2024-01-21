@@ -16,23 +16,27 @@ def make_register_message(server_addr, device_name, lifetime_seconds="60", lwm2m
     )
     return msg
 
+def response_options_as_list(coap_response):
+    return [str(option) for option in coap_response.opt.option_list()]
 
-async def register(server, device_name):
-    client_context = await Context.create_client_context()
+
+async def register(coap_client, server, device_name):
     register_message = make_register_message(
         server_addr=server,
         device_name=device_name
     )
-    return await client_context.request(register_message).response
+    response = await coap_client.request(register_message).response
+    return response, response_options_as_list(response)
 
 async def main():
     try:
+        coap_client = await Context.create_client_context()
         print("Making request to server to register device")
-        response = await register(server_url, endpoint_name)
+        register_response = await register(coap_client, server_url, endpoint_name)
     except Exception as e:
-        print(f"Failed to register device in LwM2M server at {server_url}")
+        print(f"Failed to register/deregister device in LwM2M server at {server_url}")
         print(e)
     else:
-        print(f"Response from server: {response.code}\n{response.payload}")
+        print(f"Response from server: {register_response[0].code}\n{register_response[1]}")
 
 asyncio.run(main())
