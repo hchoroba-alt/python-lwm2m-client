@@ -127,6 +127,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+lwm2m-client/
 
 # Spyder project settings
 .spyderproject
