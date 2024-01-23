@@ -1,4 +1,4 @@
-from client import make_register_path, make_register_message, make_deregister_path, make_deregister_message
+from client import make_register_path, make_register_message, make_deregister_path, make_deregister_message, default_object_links
 from aiocoap import POST, DELETE
 
 
@@ -13,6 +13,7 @@ def test_register_message():
     msg = make_register_message(
         server_addr="coap://eu.iot.avsystem.cloud",
         device_name="urn:nai:no-sec@mikegpl.dev",
+        object_links=default_object_links,
         lifetime_seconds="60",
         lwm2m_version="1.2",
         binding="U")
@@ -31,10 +32,12 @@ def test_deregister_message():
     msg = make_deregister_message(
         server_addr="coap://eu.iot.avsystem.cloud",
         device_location_parts=['rd', 'urn:nai:no-sec@mikegpl.dev']
-    ) 
+    )
     assert msg.code == DELETE
-    assert "rd" in msg.get_request_uri(), f"Device location prefix should be included in request URI: {msg.get_request_uri()}"
-    assert "coap://eu.iot.avsystem.cloud" in msg.get_request_uri(), f"Server should be included in request URI: {msg.get_request_uri()}"
+    assert "rd" in msg.get_request_uri(
+    ), f"Device location prefix should be included in request URI: {msg.get_request_uri()}"
+    assert "coap://eu.iot.avsystem.cloud" in msg.get_request_uri(
+    ), f"Server should be included in request URI: {msg.get_request_uri()}"
 
 
 test_register_path()
