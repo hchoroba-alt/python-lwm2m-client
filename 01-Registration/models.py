@@ -15,16 +15,18 @@ class DeviceObjectLinks:
 
     @classmethod
     def from_string(cls, raw: str) -> "DeviceObjectLinks":
+        # raw np. "</1/1>,</3/0>,</3303/0>"
         return cls(objects=[DeviceObjectDefinition(obj) for obj in raw.split(",")])
 
     def to_registration_payload(self) -> bytes:
-        # Np. </1/1>,</3/0>
+        # Zamienia listę ścieżek na bajty do payloadu REGISTER
+        # np. b"</1/1>,</3/0>,</3303/0>"
         return ",".join([obj.path for obj in self.objects]).encode("utf-8")
 
 
 def _default_links() -> "DeviceObjectLinks":
-    # Domyślnie: LwM2M Server (/1/1) i Device (/3/0)
-    return DeviceObjectLinks.from_string("</1/1>,</3/0>")
+    # LwM2M Server (/1/1), Device (/3/0), Temperature (/3303/0)
+    return DeviceObjectLinks.from_string("</1/1>,</3/0>,</3303/0>")
 
 
 @dataclass

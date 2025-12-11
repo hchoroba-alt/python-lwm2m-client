@@ -1,32 +1,117 @@
 # lwm2m_client.py
+from temperature_model import TEMPERATURE_RESOURCES, DISCOVER_3303_0_PAYLOAD
 
-import asyncio
 from typing import List, Tuple
+import asyncio
+import random
 
-from aiocoap import Context, Message, POST
+import aiocoap
+from aiocoap import Message, POST, CONTENT
+from aiocoap import resource as aiocoap_resource
+
 from models import RegistrationParameters
+from temperature_model import TEMPERATURE_RESOURCES
 
+
+# ---------- PROSTA SYMULACJA TEMPERATURY /3303/0/5700 ----------
+
+T_MIN = 20.0
+T_MAX = 26.0
+T_STEP = 0.3
+_current_temp = None  # ostatnia wartość
+
+
+def read_temperature_value() -> bytes:
+    """Zwraca temperaturę jako bytes, np. b'21.37'."""
+    global _current_temp
+
+    if _current_temp is None:
+        _current_temp = random.uniform(T_MIN, T_MAX)
+    else:
+        delta = random.uniform(-T_STEP, T_STEP)
+        _current_temp = max(T_MIN, min(T_MAX, _current_temp + delta))
+
+    # opcjonalnie użyjemy data modelu do debugowania
+    meta = TEMPERATURE_RESOURCES.get("/3303/0/5700")
+    if meta:
+        print(f"DEBUG: temperature ({meta.units}) -> {_current_temp:.2f}")
+    else:
+        print(f"DEBUG: temperature -> {_current_temp:.2f}")
+
+    return f"{_current_temp:.2f}".encode("utf-8")
+
+
+# ---------- RESOURCE HANDLER (READ) ----------
+
+class Lwm2mResource(aiocoap_resource.Resource):
+    """
+    Prosty handler zasobów LwM2M.
+    Na razie obsługujemy tylko READ dla /3303/0/5700 (temperatura).
+    """
+
+    def __init__(self, path: str):
+        super().__init__()
+        self.path = path  # np. "/3303/0/5700"
+
+    async def render_get(self, request: Message) -> Message:
+        print("DEBUG: received GET on", self.path)
+
+    # DISCOVER dla /3303/0 – Accept: application/link-format
+        if (
+            self.path == "/3303/0"
+            and request.opt.accept == aiocoap.numbers.media_types_rev.get(
+                "application/link-format"
+            )
+        ):
+            print("DEBUG: DISCOVER /3303/0")
+            return Message(
+                code=CONTENT,
+                payload=DISCOVER_3303_0_PAYLOAD,
+                content_format=aiocoap.numbers.media_types_rev[
+                    "application/link-format"
+                ],
+            )
+
+        # READ dla temperatury /3303/0/5700
+        if self.path == "/3303/0/5700":
+            print("DEBUG: READ /3303/0/5700 (temperature)")
+            value = read_temperature_value()
+            return Message(code=CONTENT, payload=value)
+
+        print("DEBUG: no handler for path", self.path)
+        return Message(code=aiocoap.NOT_FOUND)
+
+
+# ---------- REGISTER / UPDATE ----------
 
 def make_register_message(server_addr: str, params: RegistrationParameters) -> Message:
     path = params.register_path()
-    print("DEBUG: register path:", path)
-    msg = Message(
+    payload = params.object_links.to_registration_payload()
+
+    print("=== REGISTER REQUEST ===")
+    print("URI:", f"{server_addr}{path}")
+    print("Payload:", payload.decode("utf-8"))
+    print("Content-Format: application/link-format")
+    print("========================")
+
+    return Message(
         code=POST,
         uri=f"{server_addr}{path}",
-        payload=params.object_links.to_registration_payload(),
+        payload=payload,
+        content_format=aiocoap.numbers.media_types_rev["application/link-format"],
     )
-    print("DEBUG: register payload:", msg.payload)
-    return msg
 
 
-def extract_location_path(response) -> List[str]:
+
+
+def extract_location_path(response: Message) -> List[str]:
     # Zwraca np. ["rd", "Malaria"]
     return list(response.opt.location_path or ())
 
 
 async def register(
-    coap_client: Context, server: str, device_name: str
-) -> Tuple[object, List[str], RegistrationParameters]:
+    coap_client: aiocoap.Context, server: str, device_name: str
+) -> Tuple[Message, List[str], RegistrationParameters]:
     print("DEBUG: starting register()")
     params = RegistrationParameters(device_name=device_name)
     register_message = make_register_message(server, params)
@@ -48,24 +133,28 @@ async def register(
 def make_update_message(
     server_addr: str, device_location_parts: List[str], params: RegistrationParameters
 ) -> Message:
-    # device_location_parts: ["rd", "Malaria"]
     path = "/" + "/".join(device_location_parts)
     uri = f"{server_addr}{path}?lt={params.lifetime_seconds}&b={params.binding}"
-    print("DEBUG: UPDATE URI:", uri)
-    msg = Message(
+
+    print("=== UPDATE REQUEST ===")
+    print("URI:", uri)
+    print("Payload: (empty)")
+    print("======================")
+
+    return Message(
         code=POST,
         uri=uri,
     )
-    return msg
+
 
 
 async def send_update_loop(
-    coap_client: Context,
+    coap_client: aiocoap.Context,
     server: str,
     device_location_parts: List[str],
     params: RegistrationParameters,
 ):
-    # prosty loop: co połowę lifetime'u wysyłamy UPDATE
+    # co połowę lifetime'u wysyłamy UPDATE
     interval = max(10, params.lifetime_seconds // 2)
     print(f"DEBUG: starting UPDATE loop every {interval} seconds")
 
