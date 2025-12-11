@@ -7,6 +7,8 @@ endpoint_name = "Malaria"
 server_url = "coap://eu.iot.avsystem.cloud:5683"
 
 
+# --- Modele obiektów LwM2M ---
+
 @dataclass
 class DeviceObjectDefinition:
     path: str
@@ -20,7 +22,8 @@ class DeviceObjectLinks:
     def from_string(cls, raw: str):
         return cls(objects=[DeviceObjectDefinition(object_def) for object_def in raw.split(",")])
     
-    def to_registration_string(self):
+    def to_registration_string(self) -> bytes:
+        # Np. </1/1>,</3/0>
         return ",".join([obj.path for obj in self.objects]).encode("utf-8")
     
     @staticmethod
@@ -36,10 +39,10 @@ class RegistrationParameters:
     lwm2m_version: str = "1.2"
     binding: str = "U"
     enable_queue_binding: bool = True
-    # ważne: przekazujemy FUNKCJĘ, nie wynik funkcji
+    # WAŻNE: podajemy FUNKCJĘ, nie wynik
     object_links: DeviceObjectLinks = field(default_factory=DeviceObjectLinks.default_links)
 
-    def to_register_path(self):
+    def to_register_path(self) -> str:
         return (
             f"/rd?ep={self.device_name}"
             f"&lt={self.lifetime_seconds}"
@@ -48,31 +51,17 @@ class RegistrationParameters:
         )
 
 
-def make_register_path(device_name, lifetime_seconds="60", lwm2m_version="1.2", binding="U"):
-    return f"/rd?ep={device_name}&lt={lifetime_seconds}&lwm2m={lwm2m_version}&b={binding}&Q"
+# --- Tworzenie wiadomości CoAP ---
 
-
-def make_register_message(server_addr, parameters: RegistrationParameters):
+def make_register_message(server_addr: str, parameters: RegistrationParameters) -> Message:
     path = parameters.to_register_path()
+    print("DEBUG: register path:", path)
     msg = Message(
         code=POST,
         uri=f"{server_addr}{path}",
         payload=parameters.object_links.to_registration_string()
     )
-    return msg
-
-
-def make_deregister_path(device_location_parts):
-    assert len(device_location_parts) > 1
-    return "/" + "/".join(device_location_parts)
-
-
-def make_deregister_message(server_addr, device_location_parts):
-    path = make_deregister_path(device_location_parts)
-    msg = Message(
-        code=DELETE,
-        uri=f"{server_addr}{path}"
-    )
+    print("DEBUG: register payload:", msg.payload)
     return msg
 
 
@@ -81,7 +70,10 @@ def extract_location_path(response):
     return list(response.opt.location_path or ())
 
 
+# --- Logika rejestracji ---
+
 async def register(coap_client, server, device_name):
+    print("DEBUG: starting register()")
     registration_params = RegistrationParameters(
         device_name=device_name,
     )
@@ -90,12 +82,10 @@ async def register(coap_client, server, device_name):
         parameters=registration_params
     )
 
-    print("Register request URI:", register_message.get_request_uri())
-    print("Register request payload:", register_message.payload)
-
+    print("DEBUG: sending REGISTER to", register_message.get_request_uri())
     response = await coap_client.request(register_message).response
 
-    # Debug odpowiedzi serwera
+    print("DEBUG: got response for REGISTER")
     print("Register response code:", response.code)
     print("Register response options:", response.opt)
     print("Register response payload:", response.payload)
@@ -106,38 +96,40 @@ async def register(coap_client, server, device_name):
     return response, device_location_parts
 
 
+# --- Główna pętla programu ---
+
 async def main():
+    print("DEBUG: main() start")
     try:
         coap_client = await Context.create_client_context()
+        print("DEBUG: CoAP client context created")
         print("Making request to server to register device")
 
         response, device_location_parts = await register(coap_client, server_url, endpoint_name)
 
-        # Jeśli rejestracja się nie udała – nie próbujemy deregister
         if not response.code.is_successful():
-            print("Registration failed, skipping deregister.")
+            print("Registration failed, code:", response.code)
             return
 
-        # Jeśli nie ma Location-Path – też nie próbujemy deregister
         if not device_location_parts:
-            print("No Location-Path in register response, skipping deregister.")
+            print("No Location-Path in register response, cannot continue.")
             return
 
-        print(f"Deregistering device at location {device_location_parts}")
-        deregister_response = await coap_client.request(
-            make_deregister_message(server_url, device_location_parts)
-        ).response
+        print("Device registered successfully, keeping client alive.")
+        print("Location-Path:", device_location_parts)
 
-        print(f"Response for deregister operation: {deregister_response.code}\n"
-              f"{deregister_response.opt}\n{deregister_response.payload}")
+        # Trzymamy klienta przy życiu, żeby Device Center mógł robić Discover/Read
+        while True:
+            await asyncio.sleep(60)
 
     except Exception as e:
-        print(f"Failed to register/deregister device in LwM2M server at {server_url}")
-        print(e)
+        print(f"Client error when working with LwM2M server at {server_url}")
+        print("Exception:", e)
 
-    else:
-        print("Successfully completed device operations")
+    finally:
+        print("DEBUG: main() end")
 
 
 if __name__ == "__main__":
+    print("DEBUG: module imported, starting asyncio.run(main())")
     asyncio.run(main())
