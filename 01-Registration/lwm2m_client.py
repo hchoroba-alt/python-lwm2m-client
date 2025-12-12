@@ -1,10 +1,22 @@
 # lwm2m_client.py
+"""
+LwM2M Client (Malaria-debug) — uporządkowana wersja.
 
-from temperature_model import TEMPERATURE_RESOURCES, DISCOVER_3303_0_PAYLOAD
-from server_model import read_server_value
-from device_model import read_device_value, DISCOVER_3_0_PAYLOAD  
+Cel pliku:
+1) Trzymamy w JEDNYM miejscu opis tego, co urządzenie obsługuje (endpointy + operacje + formaty).
+2) Z tego opisu budujemy routing (aiocoap Site).
+3) Implementacje handlerów są poniżej, bez "rozsypywania" wiedzy o operacjach po całym pliku.
 
-from typing import List, Tuple
+Konwencje:
+- "DISCOVER" = GET z Accept: application/link-format (40) → zwracamy link-format.
+- "READ"     = GET zwracający wartość zasobu (tu: text/plain).
+- REGISTER/UPDATE to osobne requesty wychodzące (POST).
+"""
+
+from __future__ import annotations
+
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
 import asyncio
 import random
 
@@ -12,22 +24,75 @@ import aiocoap
 from aiocoap import Message, POST, CONTENT
 from aiocoap import resource as aiocoap_resource
 
+from temperature_model import TEMPERATURE_RESOURCES, DISCOVER_3303_0_PAYLOAD
+from server_model import read_server_value
+from device_model import read_device_value, DISCOVER_3_0_PAYLOAD
 from models import RegistrationParameters
 
-# ---------- Content-Formats używane przez LwM2M ----------
 
-TEXT_PLAIN = aiocoap.numbers.media_types_rev["text/plain"]                      # 0
+# =============================================================================
+# 1) Content-Formats (LwM2M/CoAP)
+# =============================================================================
+
+TEXT_PLAIN = aiocoap.numbers.media_types_rev["text/plain"]  # 0
 APPLICATION_LINK_FORMAT = aiocoap.numbers.media_types_rev["application/link-format"]  # 40
-# Dla pełnej specyfikacji mamy jeszcze TLV/JSON:
+
+# (na przyszłość)
 LWM2M_TLV = 11542   # application/vnd.oma.lwm2m+tlv
 LWM2M_JSON = 11543  # application/vnd.oma.lwm2m+json
 
-# ---------- PROSTA SYMULACJA TEMPERATURY /3303/0/5700 ----------
+
+# =============================================================================
+# 2) Jedno miejsce: katalog możliwości (endpointy + operacje + formaty)
+# =============================================================================
+
+@dataclass(frozen=True)
+class Capability:
+    """
+    Opis "co umiem" dla danej ścieżki.
+    """
+    path: str
+    ops: Tuple[str, ...]           # np. ("DISCOVER",) lub ("READ",)
+    formats: Tuple[int, ...]       # np. (APPLICATION_LINK_FORMAT,) lub (TEXT_PLAIN,)
+
+
+CAPABILITIES: Tuple[Capability, ...] = (
+    # --- Root ---
+    Capability("/", ("DISCOVER",), (APPLICATION_LINK_FORMAT,)),
+
+    # --- Temperature (3303) ---
+    Capability("/3303", ("DISCOVER",), (APPLICATION_LINK_FORMAT,)),
+    Capability("/3303/0", ("DISCOVER",), (APPLICATION_LINK_FORMAT,)),
+    Capability("/3303/0/5700", ("READ",), (TEXT_PLAIN,)),
+
+    # --- Device (3) ---
+    Capability("/3", ("DISCOVER",), (APPLICATION_LINK_FORMAT,)),
+    Capability("/3/0", ("DISCOVER",), (APPLICATION_LINK_FORMAT,)),
+    # Uwaga: /3/0/x to wiele zasobów — routing robimy poniżej, ale READ jest wspólny:
+    Capability("/3/0/*", ("READ",), (TEXT_PLAIN,)),
+
+    # --- Server (1) ---
+    Capability("/1/1/*", ("READ",), (TEXT_PLAIN,)),
+)
+
+
+def print_capabilities() -> None:
+    """Pomocniczo: szybkie wypisanie 'co obsługuję'."""
+    print("=== CAPABILITIES (what device supports) ===")
+    for c in CAPABILITIES:
+        fmts = ", ".join(str(f) for f in c.formats)
+        print(f"- {c.path:10s} ops={c.ops} formats={fmts}")
+    print("==========================================")
+
+
+# =============================================================================
+# 3) Symulacja temperatury /3303/0/5700
+# =============================================================================
 
 T_MIN = 20.0
 T_MAX = 26.0
 T_STEP = 0.3
-_current_temp = None  # ostatnia wartość
+_current_temp: Optional[float] = None
 
 
 def read_temperature_value() -> bytes:
@@ -40,7 +105,6 @@ def read_temperature_value() -> bytes:
         delta = random.uniform(-T_STEP, T_STEP)
         _current_temp = max(T_MIN, min(T_MAX, _current_temp + delta))
 
-    # opcjonalnie użyjemy data modelu do debugowania
     meta = TEMPERATURE_RESOURCES.get("/3303/0/5700")
     if meta:
         print(f"DEBUG: temperature ({meta.units}) -> {_current_temp:.2f}")
@@ -50,102 +114,141 @@ def read_temperature_value() -> bytes:
     return f"{_current_temp:.2f}".encode("utf-8")
 
 
-# ---------- RESOURCE HANDLERS (READ / DISCOVER) ----------
+# =============================================================================
+# 4) Handler-y (Resource classes): DISCOVER + READ
+# =============================================================================
+
+def _require_accept(request: Message, expected_format: int, *, path: str) -> Optional[Message]:
+    """
+    W LwM2M/CoAP serwer może wysłać Accept.
+    Jeśli Accept jest ustawione i nie pasuje — zwracamy 4.06 Not Acceptable.
+    """
+    accept = request.opt.accept
+    if accept is not None and accept != expected_format:
+        print(f"DEBUG: {path} Accept={accept} not supported (expected {expected_format})")
+        return Message(code=aiocoap.NOT_ACCEPTABLE)
+    return None
+
 
 class RootResource(aiocoap_resource.Resource):
     """
-    Root LwM2M resource: DISCOVER na "/"
+    GET /  (DISCOVER)
     Zwraca listę obiektów/instancji w application/link-format.
     """
 
     async def render_get(self, request: Message) -> Message:
-        accept = request.opt.accept or APPLICATION_LINK_FORMAT
-        print("DEBUG: GET /  (accept =", accept, ")")
+        maybe = _require_accept(request, APPLICATION_LINK_FORMAT, path="/")
+        if maybe:
+            return maybe
 
-        if accept == APPLICATION_LINK_FORMAT:
-            # Klient ogłasza, że ma /1/1, /3/0, /3303/0 – to samo co w REGISTER
-            payload = b"</1/1>,</3/0>,</3303/0>"
-            return Message(
-                code=CONTENT,
-                payload=payload,
-                content_format=APPLICATION_LINK_FORMAT,
-            )
-
-        # Inne formaty na razie nieobsługiwane na root
-        return Message(code=aiocoap.NOT_ACCEPTABLE)
+        print("DEBUG: GET / (DISCOVER)")
+        payload = b"</1/1>,</3/0>,</3303/0>"
+        return Message(code=CONTENT, payload=payload, content_format=APPLICATION_LINK_FORMAT)
 
 
 # ----- Temperature /3303 -----
 
 class TemperatureObjectResource(aiocoap_resource.Resource):
     """
-    /3303 – Discover instancji obiektu Temperature.
+    GET /3303 (DISCOVER) → lista instancji obiektu Temperature.
     """
 
     async def render_get(self, request: Message) -> Message:
-        accept = request.opt.accept or APPLICATION_LINK_FORMAT
-        print("DEBUG: GET /3303 (accept =", accept, ")")
+        maybe = _require_accept(request, APPLICATION_LINK_FORMAT, path="/3303")
+        if maybe:
+            return maybe
 
-        if accept == APPLICATION_LINK_FORMAT:
-            # Mamy jedną instancję: /3303/0
-            payload = b"</3303/0>"
-            return Message(
-                code=CONTENT,
-                payload=payload,
-                content_format=APPLICATION_LINK_FORMAT,
-            )
-
-        return Message(code=aiocoap.NOT_ACCEPTABLE)
+        print("DEBUG: GET /3303 (DISCOVER)")
+        payload = b"</3303/0>"
+        return Message(code=CONTENT, payload=payload, content_format=APPLICATION_LINK_FORMAT)
 
 
 class TemperatureInstanceResource(aiocoap_resource.Resource):
     """
-    /3303/0 – Discover zasobów instancji 0.
-    Na razie tylko 5700 (Sensor Value).
+    GET /3303/0 (DISCOVER) → lista zasobów instancji 0.
     """
 
     async def render_get(self, request: Message) -> Message:
-        accept = request.opt.accept or APPLICATION_LINK_FORMAT
-        print("DEBUG: GET /3303/0 (accept =", accept, ")")
+        maybe = _require_accept(request, APPLICATION_LINK_FORMAT, path="/3303/0")
+        if maybe:
+            return maybe
 
-        if accept == APPLICATION_LINK_FORMAT:
-            # Używamy payloadu zdefiniowanego w temperature_model
-            payload = DISCOVER_3303_0_PAYLOAD
-            return Message(
-                code=CONTENT,
-                payload=payload,
-                content_format=APPLICATION_LINK_FORMAT,
-            )
-
-        # Gdyby serwer chciał READ całej instancji w TLV/JSON,
-        # tutaj powinnaś zbudować TLV / JSON z wszystkimi zasobami.
-        return Message(code=aiocoap.NOT_ACCEPTABLE)
+        print("DEBUG: GET /3303/0 (DISCOVER)")
+        return Message(code=CONTENT, payload=DISCOVER_3303_0_PAYLOAD, content_format=APPLICATION_LINK_FORMAT)
 
 
 class TemperatureValueResource(aiocoap_resource.Resource):
     """
-    /3303/0/5700 – Sensor Value (float), READ w text/plain.
+    GET /3303/0/5700 (READ) → Sensor Value (float) w text/plain.
     """
 
     async def render_get(self, request: Message) -> Message:
-        accept = request.opt.accept or TEXT_PLAIN
-        print("DEBUG: GET /3303/0/5700 (accept =", accept, ")")
+        maybe = _require_accept(request, TEXT_PLAIN, path="/3303/0/5700")
+        if maybe:
+            return maybe
 
+        print("DEBUG: GET /3303/0/5700 (READ)")
         value = read_temperature_value()
+        return Message(code=CONTENT, payload=value, content_format=TEXT_PLAIN)
 
-        return Message(
-            code=CONTENT,
-            payload=value,
-            content_format=TEXT_PLAIN,
-        )
+
+# ----- Device /3 -----
+
+class DeviceObjectResource(aiocoap_resource.Resource):
+    """
+    GET /3 (DISCOVER) → lista instancji obiektu Device.
+    """
+
+    async def render_get(self, request: Message) -> Message:
+        maybe = _require_accept(request, APPLICATION_LINK_FORMAT, path="/3")
+        if maybe:
+            return maybe
+
+        print("DEBUG: GET /3 (DISCOVER)")
+        payload = b"</3/0>"
+        return Message(code=CONTENT, payload=payload, content_format=APPLICATION_LINK_FORMAT)
+
+
+class DeviceInstanceResource(aiocoap_resource.Resource):
+    """
+    GET /3/0 (DISCOVER) → lista zasobów instancji Device.
+    """
+
+    async def render_get(self, request: Message) -> Message:
+        maybe = _require_accept(request, APPLICATION_LINK_FORMAT, path="/3/0")
+        if maybe:
+            return maybe
+
+        print("DEBUG: GET /3/0 (DISCOVER)")
+        return Message(code=CONTENT, payload=DISCOVER_3_0_PAYLOAD, content_format=APPLICATION_LINK_FORMAT)
+
+
+class DeviceValueResource(aiocoap_resource.Resource):
+    """
+    GET /3/0/x (READ) → pojedynczy zasób Device.
+    """
+
+    def __init__(self, path: str):
+        super().__init__()
+        self.path = path  # np. "/3/0/0"
+
+    async def render_get(self, request: Message) -> Message:
+        maybe = _require_accept(request, TEXT_PLAIN, path=self.path)
+        if maybe:
+            return maybe
+
+        print(f"DEBUG: GET {self.path} (READ Device)")
+        value = read_device_value(self.path)
+        if value is None:
+            return Message(code=aiocoap.NOT_FOUND)
+        return Message(code=CONTENT, payload=value, content_format=TEXT_PLAIN)
 
 
 # ----- Server /1 -----
 
 class ServerValueResource(aiocoap_resource.Resource):
     """
-    /1/1/x – zasoby obiektu Server.
-    Wartości są pobierane z server_model.read_server_value(path).
+    GET /1/1/x (READ) → zasób obiektu Server.
     """
 
     def __init__(self, path: str):
@@ -153,90 +256,55 @@ class ServerValueResource(aiocoap_resource.Resource):
         self.path = path  # np. "/1/1/0"
 
     async def render_get(self, request: Message) -> Message:
-        print(f"DEBUG: GET {self.path} (Server resource)")
+        maybe = _require_accept(request, TEXT_PLAIN, path=self.path)
+        if maybe:
+            return maybe
+
+        print(f"DEBUG: GET {self.path} (READ Server)")
         value = read_server_value(self.path)
-        if value is not None:
-            return Message(
-                code=CONTENT,
-                payload=value,
-                content_format=TEXT_PLAIN,
-            )
-
-        print("DEBUG: no value defined for", self.path)
-        return Message(code=aiocoap.NOT_FOUND)
+        if value is None:
+            return Message(code=aiocoap.NOT_FOUND)
+        return Message(code=CONTENT, payload=value, content_format=TEXT_PLAIN)
 
 
-# ----- Device /3 -----
+# =============================================================================
+# 5) Routing (jedno miejsce): ścieżka → handler
+# =============================================================================
 
-class DeviceObjectResource(aiocoap_resource.Resource):
+def build_site() -> aiocoap_resource.Site:
     """
-    /3 – Device Object, Discover instancji.
+    Tworzy aiocoap Site i podpina zasoby.
+    To jest jedyne miejsce, gdzie decydujemy "co naprawdę istnieje" po stronie serwera.
     """
+    root = aiocoap_resource.Site()
 
-    async def render_get(self, request: Message) -> Message:
-        accept = request.opt.accept or APPLICATION_LINK_FORMAT
-        print("DEBUG: GET /3 (accept =", accept, ")")
+    # Root
+    root.add_resource((), RootResource())
 
-        if accept == APPLICATION_LINK_FORMAT:
-            # Jedna instancja Device: /3/0
-            payload = b"</3/0>"
-            return Message(
-                code=CONTENT,
-                payload=payload,
-                content_format=APPLICATION_LINK_FORMAT,
-            )
+    # Temperature
+    root.add_resource(("3303",), TemperatureObjectResource())
+    root.add_resource(("3303", "0"), TemperatureInstanceResource())
+    root.add_resource(("3303", "0", "5700"), TemperatureValueResource())
 
-        return Message(code=aiocoap.NOT_ACCEPTABLE)
+    # Device
+    root.add_resource(("3",), DeviceObjectResource())
+    root.add_resource(("3", "0"), DeviceInstanceResource())
 
+    # Device resources (przykład: jeśli obsługujesz 0..16)
+    # Jeśli masz inną listę, ustaw ją tu w jednym miejscu.
+    for rid in range(0, 17):
+        root.add_resource(("3", "0", str(rid)), DeviceValueResource(f"/3/0/{rid}"))
 
-class DeviceInstanceResource(aiocoap_resource.Resource):
-    """
-    /3/0 – Discover zasobów Device Object instancja 0.
-    DISCOVER_3_0_PAYLOAD powinien zawierać listę zasobów, np.:
-    b"</3/0/0>,</3/0/1>,</3/0/2>,...</3/0/16>"
-    """
+    # Server resources (przykład: jeśli obsługujesz 0..6)
+    for rid in range(0, 7):
+        root.add_resource(("1", "1", str(rid)), ServerValueResource(f"/1/1/{rid}"))
 
-    async def render_get(self, request: Message) -> Message:
-        accept = request.opt.accept or APPLICATION_LINK_FORMAT
-        print("DEBUG: GET /3/0 (accept =", accept, ")")
-
-        if accept == APPLICATION_LINK_FORMAT:
-            payload = DISCOVER_3_0_PAYLOAD
-            return Message(
-                code=CONTENT,
-                payload=payload,
-                content_format=APPLICATION_LINK_FORMAT,
-            )
-
-        # READ całej instancji w TLV/JSON można dodać później
-        return Message(code=aiocoap.NOT_ACCEPTABLE)
+    return root
 
 
-class DeviceValueResource(aiocoap_resource.Resource):
-    """
-    /3/0/x – pojedyncze zasoby Device Object (Manufacturer, Model, itp.).
-    Wartości są pobierane z device_model.read_device_value(path).
-    """
-
-    def __init__(self, path: str):
-        super().__init__()
-        self.path = path  # np. "/3/0/0" – Manufacturer
-
-    async def render_get(self, request: Message) -> Message:
-        print(f"DEBUG: GET {self.path} (Device resource)")
-        value = read_device_value(self.path)
-        if value is not None:
-            return Message(
-                code=CONTENT,
-                payload=value,
-                content_format=TEXT_PLAIN,
-            )
-
-        print("DEBUG: no value defined for", self.path)
-        return Message(code=aiocoap.NOT_FOUND)
-
-
-# ---------- REGISTER / UPDATE ----------
+# =============================================================================
+# 6) REGISTER / UPDATE (wychodzące requesty)
+# =============================================================================
 
 def make_register_message(server_addr: str, params: RegistrationParameters) -> Message:
     path = params.register_path()
@@ -248,7 +316,7 @@ def make_register_message(server_addr: str, params: RegistrationParameters) -> M
         print("Payload:", payload.decode("utf-8"))
     except Exception:
         print("Payload (bytes):", payload)
-    print("Content-Format: application/link-format")
+    print("Content-Format: application/link-format (40)")
     print("========================")
 
     return Message(
@@ -260,7 +328,7 @@ def make_register_message(server_addr: str, params: RegistrationParameters) -> M
 
 
 def extract_location_path(response: Message) -> List[str]:
-    # Zwraca np. ["rd", "Malaria"]
+    """Zwraca np. ["rd", "Malaria"] (Location-Path z odpowiedzi REGISTER)."""
     return list(response.opt.location_path or ())
 
 
@@ -268,6 +336,7 @@ async def register(
     coap_client: aiocoap.Context, server: str, device_name: str
 ) -> Tuple[Message, List[str], RegistrationParameters]:
     print("DEBUG: starting register()")
+
     params = RegistrationParameters(device_name=device_name)
     register_message = make_register_message(server, params)
 
@@ -296,10 +365,7 @@ def make_update_message(
     print("Payload: (empty)")
     print("======================")
 
-    return Message(
-        code=POST,
-        uri=uri,
-    )
+    return Message(code=POST, uri=uri)
 
 
 async def send_update_loop(
@@ -307,8 +373,10 @@ async def send_update_loop(
     server: str,
     device_location_parts: List[str],
     params: RegistrationParameters,
-):
-    # co połowę lifetime'u wysyłamy UPDATE
+) -> None:
+    """
+    Co połowę lifetime'u wysyłamy UPDATE (minimum 10s).
+    """
     interval = max(10, params.lifetime_seconds // 2)
     print(f"DEBUG: starting UPDATE loop every {interval} seconds")
 
