@@ -1,7 +1,7 @@
 # main.py
 
 import asyncio
-from aiocoap import Context
+from aiocoap import Context # type: ignore
 from aiocoap import resource as aiocoap_resource
 
 from config import endpoint_name, server_url
