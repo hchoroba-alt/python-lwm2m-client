@@ -1,13 +1,16 @@
 # main.py
 
 import asyncio
-from aiocoap import Context # type: ignore
+from aiocoap import Context  # type: ignore
 from aiocoap import resource as aiocoap_resource
 
 from config import endpoint_name, server_url
+from models import SendPayload
 from lwm2m_client import (
     register,
     send_update_loop,
+    send,  # <-- NOWE (SEND)
+    read_temperature_value,  # <-- NOWE (bierzemy temp tak samo jak READ)
     RootResource,
     TemperatureObjectResource,
     TemperatureInstanceResource,
@@ -77,6 +80,18 @@ async def main():
     print("Device registered successfully.")
     print("Location-Path:", location)
     print("Starting UPDATE loop to keep device registered.")
+
+    # --- SEND LOOP (LwM2M 1.2 Data Push) ---
+    async def send_loop():
+        while True:
+            payload = SendPayload()
+            temp = float(read_temperature_value().decode("utf-8"))
+            payload.add("/3303/0/5700", temp)
+            await send(coap_client, server_url, payload)
+            await asyncio.sleep(30)
+
+    asyncio.create_task(send_loop())
+    print("DEBUG: SEND loop started (every 30 seconds)")
 
     # --- UPDATE LOOP (keeps device alive) ---
     await send_update_loop(coap_client, server_url, location, params)

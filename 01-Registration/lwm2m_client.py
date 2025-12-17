@@ -24,10 +24,11 @@ import aiocoap
 from aiocoap import Message, POST, CONTENT
 from aiocoap import resource as aiocoap_resource
 
-from temperature_model import TEMPERATURE_RESOURCES, DISCOVER_3303_0_PAYLOAD
+from temperature_model import TEMPERATURE_RESOURCES, DISCOVER_3303_0_PAYLOAD, get_katowice_temperature
 from server_model import read_server_value
 from device_model import read_device_value, DISCOVER_3_0_PAYLOAD
-from models import RegistrationParameters
+from models import RegistrationParameters, SendPayload
+
 
 
 # =============================================================================
@@ -36,6 +37,10 @@ from models import RegistrationParameters
 
 TEXT_PLAIN = aiocoap.numbers.media_types_rev["text/plain"]  # 0
 APPLICATION_LINK_FORMAT = aiocoap.numbers.media_types_rev["application/link-format"]  # 40
+
+# SEND payload formats (LwM2M 1.2)
+SENML_JSON = aiocoap.numbers.media_types_rev.get("application/senml+json", 110)  # 110 = IANA
+
 
 # (na przyszłość)
 LWM2M_TLV = 11542   # application/vnd.oma.lwm2m+tlv
@@ -96,14 +101,11 @@ _current_temp: Optional[float] = None
 
 
 def read_temperature_value() -> bytes:
-    """Zwraca temperaturę jako bytes, np. b'21.37'."""
+    """Zwraca temperaturę z Katowic jako bytes, np. b'21.37'."""
     global _current_temp
 
-    if _current_temp is None:
-        _current_temp = random.uniform(T_MIN, T_MAX)
-    else:
-        delta = random.uniform(-T_STEP, T_STEP)
-        _current_temp = max(T_MIN, min(T_MAX, _current_temp + delta))
+    # Pobierz aktualną temperaturę z Katowic
+    _current_temp = get_katowice_temperature()
 
     meta = TEMPERATURE_RESOURCES.get("/3303/0/5700")
     if meta:
@@ -386,3 +388,47 @@ async def send_update_loop(
         update_msg = make_update_message(server, device_location_parts, params)
         resp = await coap_client.request(update_msg).response
         print("Update response code:", resp.code)
+# =============================================================================
+# 7) SEND (LwM2M 1.2 Data Push) — wychodzący request POST /dp
+# =============================================================================
+
+def make_send_message(server_addr: str, payload_bytes: bytes) -> Message:
+    """
+    Buduje wiadomość SEND.
+    LwM2M 1.2: Client wysyła POST na /dp z payloadem (tu: SenML JSON).
+    """
+    uri = f"{server_addr}/dp"
+
+    print("=== SEND REQUEST ===")
+    print("URI:", uri)
+    try:
+        print("Payload:", payload_bytes.decode("utf-8"))
+    except Exception:
+        print("Payload (bytes):", payload_bytes)
+    print("Content-Format: application/senml+json (110)")
+    print("====================")
+
+    return Message(
+        code=POST,
+        uri=uri,
+        payload=payload_bytes,
+        content_format=SENML_JSON,
+    )
+
+
+async def send(
+    coap_client: aiocoap.Context,
+    server: str,
+    payload: SendPayload,
+) -> Message:
+    """
+    Wysyła SEND do serwera.
+    payload: obiekt z models.py (buduje bytes przez to_senml_json_bytes()).
+    """
+    payload_bytes = payload.to_senml_json_bytes()
+    msg = make_send_message(server, payload_bytes)
+
+    print("DEBUG: sending SEND to", msg.get_request_uri())
+    response = await coap_client.request(msg).response
+    print("Send response code:", response.code)
+    return response
