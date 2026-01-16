@@ -99,3 +99,26 @@ def read_device_value(path: str) -> Optional[bytes]:
 
     print(f"DEBUG: Device resource not defined for path {path}")
     return None
+
+
+def get_all_device_resources() -> Dict[int, str]:
+    """
+    Zwraca wszystkie zasoby Device Object /3/0 jako słownik {resource_id: value}.
+    Do użycia w TLV encoding.
+    
+    :return: słownik {0: "Manufacturer", 1: "Model", ...}
+    """
+    resources = {}
+    
+    # Dodaj wszystkie statyczne zasoby
+    for path, value in DEVICE_STATIC_VALUES.items():
+        # Wyciągnij resource_id z path "/3/0/X"
+        parts = path.split('/')
+        if len(parts) == 4 and parts[1] == '3' and parts[2] == '0':
+            resource_id = int(parts[3])
+            resources[resource_id] = value
+    
+    # Dodaj dynamiczny zasób: Current time (13)
+    resources[13] = _read_current_time_epoch()
+    
+    return resources

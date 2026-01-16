@@ -1,8 +1,9 @@
 # lwm2m_client.py
 
 from temperature_model import TEMPERATURE_RESOURCES, DISCOVER_3303_0_PAYLOAD
-from server_model import read_server_value
-from device_model import read_device_value, DISCOVER_3_0_PAYLOAD  
+from server_model import read_server_value, get_all_server_resources
+from device_model import read_device_value, DISCOVER_3_0_PAYLOAD, get_all_device_resources
+from tlv_encoder import build_device_instance_tlv, build_server_instance_tlv, build_temperature_instance_tlv  
 
 from typing import List, Tuple
 import asyncio
@@ -63,8 +64,8 @@ class RootResource(aiocoap_resource.Resource):
         print("DEBUG: GET /  (accept =", accept, ")")
 
         if accept == APPLICATION_LINK_FORMAT:
-            # Klient ogłasza, że ma /1/1, /3/0, /3303/0 – to samo co w REGISTER
-            payload = b"</1/1>,</3/0>,</3303/0>"
+            # Klient ogłasza wszystkie obiekty i instancje – to samo co w REGISTER
+            payload = b"</1>,</1/1>,</3>,</3/0>,</3303>,</3303/0>"
             return Message(
                 code=CONTENT,
                 payload=payload,
@@ -79,37 +80,55 @@ class RootResource(aiocoap_resource.Resource):
 
 class TemperatureObjectResource(aiocoap_resource.Resource):
     """
-    /3303 – Discover instancji obiektu Temperature.
+    /3303 – Discover instancji obiektu Temperature lub READ w TLV.
     """
 
     async def render_get(self, request: Message) -> Message:
-        accept = request.opt.accept or APPLICATION_LINK_FORMAT
+        accept = request.opt.accept
         print("DEBUG: GET /3303 (accept =", accept, ")")
 
+        # DISCOVER
         if accept == APPLICATION_LINK_FORMAT:
             # Mamy jedną instancję: /3303/0
             payload = b"</3303/0>"
+            print("DEBUG: DISCOVER - zwracam link-format")
             return Message(
                 code=CONTENT,
                 payload=payload,
                 content_format=APPLICATION_LINK_FORMAT,
             )
 
+        # READ - zwracamy instancję w TLV
+        if accept is None or accept == LWM2M_TLV:
+            print("DEBUG: READ operation - zwracam instancję /3303/0 w TLV")
+            temp_value = read_temperature_value().decode('utf-8')
+            temperature_resources = {5700: float(temp_value)}
+            payload = build_temperature_instance_tlv(temperature_resources)
+            return Message(
+                code=CONTENT,
+                payload=payload,
+                content_format=LWM2M_TLV,
+            )
+        
+        # Inne formaty nie obsługujemy
+        print("DEBUG: Nieobsługiwany format accept =", accept)
         return Message(code=aiocoap.NOT_ACCEPTABLE)
 
 
 class TemperatureInstanceResource(aiocoap_resource.Resource):
     """
-    /3303/0 – Discover zasobów instancji 0.
+    /3303/0 – Discover zasobów instancji 0 lub READ w TLV.
     Na razie tylko 5700 (Sensor Value).
     """
 
     async def render_get(self, request: Message) -> Message:
-        accept = request.opt.accept or APPLICATION_LINK_FORMAT
+        accept = request.opt.accept
         print("DEBUG: GET /3303/0 (accept =", accept, ")")
 
+        # DISCOVER
         if accept == APPLICATION_LINK_FORMAT:
             # Używamy payloadu zdefiniowanego w temperature_model
+            print("DEBUG: DISCOVER - zwracam link-format")
             payload = DISCOVER_3303_0_PAYLOAD
             return Message(
                 code=CONTENT,
@@ -117,8 +136,20 @@ class TemperatureInstanceResource(aiocoap_resource.Resource):
                 content_format=APPLICATION_LINK_FORMAT,
             )
 
-        # Gdyby serwer chciał READ całej instancji w TLV/JSON,
-        # tutaj powinnaś zbudować TLV / JSON z wszystkimi zasobami.
+        # READ całej instancji w TLV
+        if accept is None or accept == LWM2M_TLV:
+            print("DEBUG: READ operation - zwracam instancję /3303/0 w TLV")
+            temp_value = read_temperature_value().decode('utf-8')
+            temperature_resources = {5700: float(temp_value)}
+            payload = build_temperature_instance_tlv(temperature_resources)
+            return Message(
+                code=CONTENT,
+                payload=payload,
+                content_format=LWM2M_TLV,
+            )
+        
+        # Inne formaty nie obsługujemy
+        print("DEBUG: Nieobsługiwany format accept =", accept)
         return Message(code=aiocoap.NOT_ACCEPTABLE)
 
 
@@ -141,6 +172,78 @@ class TemperatureValueResource(aiocoap_resource.Resource):
 
 
 # ----- Server /1 -----
+
+class ServerObjectResource(aiocoap_resource.Resource):
+    """
+    /1 – Server Object, Discover instancji.
+    """
+
+    async def render_get(self, request: Message) -> Message:
+        accept = request.opt.accept
+        print("DEBUG: GET /1 (accept =", accept, ")")
+
+        # DISCOVER zwraca instancje
+        if accept == APPLICATION_LINK_FORMAT:
+            # Jedna instancja Server: /1/1
+            payload = b"</1/1>"
+            print("DEBUG: DISCOVER - zwracam link-format")
+            return Message(
+                code=CONTENT,
+                payload=payload,
+                content_format=APPLICATION_LINK_FORMAT,
+            )
+        
+        # READ - zwracamy instancję w TLV
+        if accept is None or accept == LWM2M_TLV:
+            print("DEBUG: READ operation - zwracam instancję /1/1 w TLV")
+            server_resources = get_all_server_resources()
+            payload = build_server_instance_tlv(server_resources)
+            return Message(
+                code=CONTENT,
+                payload=payload,
+                content_format=LWM2M_TLV,
+            )
+        
+        # Inne formaty nie obsługujemy
+        print("DEBUG: Nieobsługiwany format accept =", accept)
+        return Message(code=aiocoap.NOT_ACCEPTABLE)
+
+
+class ServerInstanceResource(aiocoap_resource.Resource):
+    """
+    /1/1 – Discover zasobów Server Object instancja 1.
+    """
+
+    async def render_get(self, request: Message) -> Message:
+        accept = request.opt.accept
+        print("DEBUG: GET /1/1 (accept =", accept, ")")
+
+        # DISCOVER zwraca listę zasobów
+        if accept == APPLICATION_LINK_FORMAT:
+            # Zasoby: 0 (Short Server ID), 1 (Lifetime), 7 (Binding)
+            payload = b"</1/1/0>,</1/1/1>,</1/1/7>"
+            print("DEBUG: DISCOVER - zwracam link-format")
+            return Message(
+                code=CONTENT,
+                payload=payload,
+                content_format=APPLICATION_LINK_FORMAT,
+            )
+        
+        # READ całej instancji w TLV
+        if accept is None or accept == LWM2M_TLV:
+            print("DEBUG: READ operation - zwracam instancję /1/1 w TLV")
+            server_resources = get_all_server_resources()
+            payload = build_server_instance_tlv(server_resources)
+            return Message(
+                code=CONTENT,
+                payload=payload,
+                content_format=LWM2M_TLV,
+            )
+        
+        # Inne formaty nie obsługujemy
+        print("DEBUG: Nieobsługiwany format accept =", accept)
+        return Message(code=aiocoap.NOT_ACCEPTABLE)
+
 
 class ServerValueResource(aiocoap_resource.Resource):
     """
@@ -170,15 +273,14 @@ class ServerValueResource(aiocoap_resource.Resource):
 
 class DeviceObjectResource(aiocoap_resource.Resource):
     """
-    /3 – Device Object, Discover instancji.
+    /3 – Device Object, Discover instancji lub READ w TLV.
     """
 
     async def render_get(self, request: Message) -> Message:
         accept = request.opt.accept
         print("DEBUG: GET /3 (accept =", accept, ")")
-        print("DEBUG: Request options:", request.opt)
 
-        # DISCOVER ma content-format 40, READ nie ma accept lub ma TLV/JSON
+        # DISCOVER ma content-format 40
         if accept == APPLICATION_LINK_FORMAT:
             # DISCOVER
             payload = b"</3/0>"
@@ -189,23 +291,36 @@ class DeviceObjectResource(aiocoap_resource.Resource):
                 content_format=APPLICATION_LINK_FORMAT,
             )
         
-        # READ - nie obsługujemy, serwer powinien czytać pojedyncze zasoby
-        print("DEBUG: READ operation - zwracam 4.06 Not Acceptable")
+        # READ - zwracamy instancję w TLV
+        if accept is None or accept == LWM2M_TLV:
+            print("DEBUG: READ operation - zwracam instancję /3/0 w TLV")
+            device_resources = get_all_device_resources()
+            payload = build_device_instance_tlv(device_resources)
+            return Message(
+                code=CONTENT,
+                payload=payload,
+                content_format=LWM2M_TLV,
+            )
+        
+        # Inne formaty nie obsługujemy
+        print("DEBUG: Nieobsługiwany format accept =", accept)
         return Message(code=aiocoap.NOT_ACCEPTABLE)
 
 
 class DeviceInstanceResource(aiocoap_resource.Resource):
     """
-    /3/0 – Discover zasobów Device Object instancja 0.
+    /3/0 – Discover zasobów Device Object instancja 0 lub READ w TLV.
     DISCOVER_3_0_PAYLOAD powinien zawierać listę zasobów, np.:
     b"</3/0/0>,</3/0/1>,</3/0/2>,...</3/0/16>"
     """
 
     async def render_get(self, request: Message) -> Message:
-        accept = request.opt.accept or APPLICATION_LINK_FORMAT
+        accept = request.opt.accept
         print("DEBUG: GET /3/0 (accept =", accept, ")")
 
+        # DISCOVER
         if accept == APPLICATION_LINK_FORMAT:
+            print("DEBUG: DISCOVER - zwracam link-format")
             payload = DISCOVER_3_0_PAYLOAD
             return Message(
                 code=CONTENT,
@@ -213,7 +328,19 @@ class DeviceInstanceResource(aiocoap_resource.Resource):
                 content_format=APPLICATION_LINK_FORMAT,
             )
 
-        # READ całej instancji w TLV/JSON można dodać później
+        # READ całej instancji w TLV
+        if accept is None or accept == LWM2M_TLV:
+            print("DEBUG: READ operation - zwracam instancję /3/0 w TLV")
+            device_resources = get_all_device_resources()
+            payload = build_device_instance_tlv(device_resources)
+            return Message(
+                code=CONTENT,
+                payload=payload,
+                content_format=LWM2M_TLV,
+            )
+        
+        # Inne formaty nie obsługujemy
+        print("DEBUG: Nieobsługiwany format accept =", accept)
         return Message(code=aiocoap.NOT_ACCEPTABLE)
 
 

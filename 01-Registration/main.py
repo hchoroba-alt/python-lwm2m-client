@@ -12,6 +12,8 @@ from lwm2m_client import (
     TemperatureObjectResource,
     TemperatureInstanceResource,
     TemperatureValueResource,
+    ServerObjectResource,
+    ServerInstanceResource,
     ServerValueResource,
     DeviceObjectResource,
     DeviceInstanceResource,
@@ -33,7 +35,9 @@ async def main():
     root.add_resource(('3303', '0'), TemperatureInstanceResource())
     root.add_resource(('3303', '0', '5700'), TemperatureValueResource())
 
-    # Obiekt Server /1/1/x
+    # Obiekt Server /1
+    root.add_resource(('1',), ServerObjectResource())
+    root.add_resource(('1', '1'), ServerInstanceResource())
     root.add_resource(('1', '1', '0'), ServerValueResource("/1/1/0"))
     root.add_resource(('1', '1', '1'), ServerValueResource("/1/1/1"))
     root.add_resource(('1', '1', '7'), ServerValueResource("/1/1/7"))
