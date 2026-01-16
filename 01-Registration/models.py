@@ -26,7 +26,7 @@ class DeviceObjectLinks:
 
 def _default_links() -> "DeviceObjectLinks":
     # LwM2M Server (/1/1), Device (/3/0), Temperature (/3303/0)
-    return DeviceObjectLinks.from_string("</1/1>,</3/0>,</3303/0>")
+    return DeviceObjectLinks.from_string("</1>,</1/1>,</3>,</3/0>,</3303>,</3303/0>")
 
 
 @dataclass

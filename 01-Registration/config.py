@@ -1,4 +1,4 @@
 # config.py
 
-endpoint_name = "Malaria-debug"
+endpoint_name = "Mala01"
 server_url = "coap://eu.iot.avsystem.cloud:5683"

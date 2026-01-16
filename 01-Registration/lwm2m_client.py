@@ -174,18 +174,23 @@ class DeviceObjectResource(aiocoap_resource.Resource):
     """
 
     async def render_get(self, request: Message) -> Message:
-        accept = request.opt.accept or APPLICATION_LINK_FORMAT
+        accept = request.opt.accept
         print("DEBUG: GET /3 (accept =", accept, ")")
+        print("DEBUG: Request options:", request.opt)
 
+        # DISCOVER ma content-format 40, READ nie ma accept lub ma TLV/JSON
         if accept == APPLICATION_LINK_FORMAT:
-            # Jedna instancja Device: /3/0
+            # DISCOVER
             payload = b"</3/0>"
+            print("DEBUG: DISCOVER - zwracam link-format")
             return Message(
                 code=CONTENT,
                 payload=payload,
                 content_format=APPLICATION_LINK_FORMAT,
             )
-
+        
+        # READ - nie obsługujemy, serwer powinien czytać pojedyncze zasoby
+        print("DEBUG: READ operation - zwracam 4.06 Not Acceptable")
         return Message(code=aiocoap.NOT_ACCEPTABLE)
 
 
