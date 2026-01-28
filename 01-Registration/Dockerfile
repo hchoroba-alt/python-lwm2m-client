@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# Wyłącz buforowanie outputu Pythona (bez tego logi nie są widoczne w Dockerze)
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 COPY requirements.txt .

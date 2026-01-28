@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 from typing import Dict
-import requests
 
 
 @dataclass
@@ -29,27 +28,18 @@ TEMPERATURE_RESOURCES: Dict[str, TemperatureResourceDef] = {
 DISCOVER_3303_0_PAYLOAD = b"</3303/0/5700>"
 
 
-def get_katowice_temperature() -> float:
+def get_temperature_value() -> float:
     """
-    Pobiera aktualną temperaturę z Katowic używając API Open-Meteo.
-    Zwraca temperaturę w stopniach Celsjusza.
-    W przypadku błędu zwraca 20.0 jako wartość domyślną.
+    Zwraca aktualną wartość temperatury jako float.
+    Do użycia w TLV encoding i innych operacjach.
+    
+    :return: temperatura jako float
     """
-    try:
-        # Współrzędne Katowic: 50.2649, 19.0238
-        url = "https://api.open-meteo.com/v1/forecast"
-        params = {
-            "latitude": 50.2649,
-            "longitude": 19.0238,
-            "current_weather": True
-        }
-        response = requests.get(url, params=params, timeout=5)
-        response.raise_for_status()
-        data = response.json()
-        temperature = data["current_weather"]["temperature"]
-        print(f"DEBUG: Pobrano temperaturę z Katowic: {temperature}°C")
-        return float(temperature)
-    except Exception as e:
-        print(f"ERROR: Nie udało się pobrać temperatury z Katowic: {e}")
-        print("DEBUG: Zwracam domyślną wartość 20.0°C")
-        return 20.0
+    # Ta funkcja będzie wywołana z lwm2m_client.py
+    # Na razie zwracamy wartość przykładową, 
+    # faktyczna implementacja jest w lwm2m_client._current_temp
+    # Zostanie to połączone w refaktoringu
+    import random
+    T_MIN = 20.0
+    T_MAX = 26.0
+    return random.uniform(T_MIN, T_MAX)

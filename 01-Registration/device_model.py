@@ -21,7 +21,7 @@ Obsługiwane zasoby (zgodnie z OMA Device Object):
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Union, Dict
 import time
 from datetime import datetime, timezone
 
@@ -49,23 +49,21 @@ DISCOVER_3_0_PAYLOAD: bytes = b",".join(
 
 
 # Statyczne wartości Device Object.
-# Dla prostoty przechowujemy je jako stringi i przy odczycie zamieniamy na bytes.
+# Wartości muszą mieć odpowiednie typy zgodnie ze specyfikacją LwM2M!
 DEVICE_STATIC_VALUES = {
-    "/3/0/0": "Malaria Corp.",         # Manufacturer
-    "/3/0/1": "Malaria-Client-01",     # Model number
-    "/3/0/2": "SN-00000001",           # Serial number
-    "/3/0/3": "1.0.0",                 # Firmware version
-    # Uproszczone multi-instance – tutaj jako zwykły tekst.
-    # W "prawdziwym" TLV byłaby to tablica instancji.
-    "/3/0/6": "0",                     # Available power sources (0 = DC)
-    "/3/0/7": "5000",                  # Power source voltage (mV)
-    "/3/0/8": "100",                   # Power source current (mA)
-    "/3/0/9": "100",                   # Battery level (%)
-    "/3/0/10": "1024",                 # Memory free (kB) – wartość przykładowa
-    "/3/0/11": "0",                    # Error code (0 = no error)
-    "/3/0/14": "+01:00",               # UTC offset (np. Europa/Warszawa zimą)
-    "/3/0/15": "Europe/Warsaw",        # Timezone
-    "/3/0/16": "U",                    # Supported binding and modes (U = UDP)
+    "/3/0/0": "Malaria Corp.",         # Manufacturer (string)
+    "/3/0/1": "Malaria-Client-01",     # Model number (string)
+    "/3/0/2": "SN-00000001",           # Serial number (string)
+    "/3/0/3": "1.0.0",                 # Firmware version (string)
+    "/3/0/6": 0,                       # Available power sources (integer: 0=DC, 1=Internal Battery, etc.)
+    "/3/0/7": 5000,                    # Power source voltage (integer: mV)
+    "/3/0/8": 100,                     # Power source current (integer: mA)
+    "/3/0/9": 100,                     # Battery level (integer: %)
+    "/3/0/10": 1024,                   # Memory free (integer: kB)
+    "/3/0/11": 0,                      # Error code (integer: 0 = no error)
+    "/3/0/14": "+01:00",               # UTC offset (string)
+    "/3/0/15": "Europe/Warsaw",        # Timezone (string)
+    "/3/0/16": "U",                    # Supported binding and modes (string)
 }
 
 
@@ -95,7 +93,31 @@ def read_device_value(path: str) -> Optional[bytes]:
     if path in DEVICE_STATIC_VALUES:
         value = DEVICE_STATIC_VALUES[path]
         print(f"DEBUG: Device {path} -> {value}")
-        return value.encode("utf-8")
+        # Konwertuj do stringa dla text/plain
+        return str(value).encode("utf-8")
 
     print(f"DEBUG: Device resource not defined for path {path}")
     return None
+
+
+def get_all_device_resources() -> Dict[int, Union[str, int]]:
+    """
+    Zwraca wszystkie zasoby Device Object /3/0 jako słownik {resource_id: value}.
+    Do użycia w TLV encoding. WARTOŚCI MUSZĄ MIEĆ WŁAŚCIWE TYPY!
+    
+    :return: słownik {0: "Manufacturer", 6: 0 (int), 7: 5000 (int), ...}
+    """
+    resources = {}
+    
+    # Dodaj wszystkie statyczne zasoby (z poprawnymi typami!)
+    for path, value in DEVICE_STATIC_VALUES.items():
+        # Wyciągnij resource_id z path "/3/0/X"
+        parts = path.split('/')
+        if len(parts) == 4 and parts[1] == '3' and parts[2] == '0':
+            resource_id = int(parts[3])
+            resources[resource_id] = value  # value jest już int lub str
+    
+    # Dodaj dynamiczny zasób: Current time (13) jako INTEGER
+    resources[13] = int(_read_current_time_epoch())
+    
+    return resources

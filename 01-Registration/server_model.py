@@ -62,3 +62,17 @@ SERVER_VALUES = {
 def read_server_value(path: str) -> bytes | None:
     """Zwraca wartość zasobu /1/1/x jako bytes albo None, jeśli nie znamy."""
     return SERVER_VALUES.get(path)
+
+
+def get_all_server_resources() -> Dict[int, str]:
+    """
+    Zwraca wszystkie zasoby Server Object /1/1 jako słownik {resource_id: value}.
+    Do użycia w TLV encoding.
+    
+    :return: słownik {0: 1, 1: 60, 7: "U"}
+    """
+    return {
+        0: SHORT_SERVER_ID,    # Short Server ID
+        1: LIFETIME,           # Lifetime
+        7: BINDING,            # Binding
+    }
