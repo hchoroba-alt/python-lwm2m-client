@@ -98,20 +98,8 @@ class TemperatureObjectResource(aiocoap_resource.Resource):
                 content_format=APPLICATION_LINK_FORMAT,
             )
 
-        # READ - zwracamy instancję w TLV
-        if accept is None or accept == LWM2M_TLV:
-            print("DEBUG: READ operation - zwracam instancję /3303/0 w TLV")
-            temp_value = read_temperature_value().decode('utf-8')
-            temperature_resources = {5700: float(temp_value)}
-            payload = build_temperature_instance_tlv(temperature_resources)
-            return Message(
-                code=CONTENT,
-                payload=payload,
-                content_format=LWM2M_TLV,
-            )
-        
-        # Inne formaty nie obsługujemy
-        print("DEBUG: Nieobsługiwany format accept =", accept)
+        # READ - nie obsługujemy
+        print("DEBUG: READ operation - zwracam 4.06 Not Acceptable")
         return Message(code=aiocoap.NOT_ACCEPTABLE)
 
 
@@ -136,20 +124,8 @@ class TemperatureInstanceResource(aiocoap_resource.Resource):
                 content_format=APPLICATION_LINK_FORMAT,
             )
 
-        # READ całej instancji w TLV
-        if accept is None or accept == LWM2M_TLV:
-            print("DEBUG: READ operation - zwracam instancję /3303/0 w TLV")
-            temp_value = read_temperature_value().decode('utf-8')
-            temperature_resources = {5700: float(temp_value)}
-            payload = build_temperature_instance_tlv(temperature_resources)
-            return Message(
-                code=CONTENT,
-                payload=payload,
-                content_format=LWM2M_TLV,
-            )
-        
-        # Inne formaty nie obsługujemy
-        print("DEBUG: Nieobsługiwany format accept =", accept)
+        # READ całej instancji - nie obsługujemy
+        print("DEBUG: READ operation - zwracam 4.06 Not Acceptable")
         return Message(code=aiocoap.NOT_ACCEPTABLE)
 
 
@@ -193,19 +169,8 @@ class ServerObjectResource(aiocoap_resource.Resource):
                 content_format=APPLICATION_LINK_FORMAT,
             )
         
-        # READ - zwracamy instancję w TLV
-        if accept is None or accept == LWM2M_TLV:
-            print("DEBUG: READ operation - zwracam instancję /1/1 w TLV")
-            server_resources = get_all_server_resources()
-            payload = build_server_instance_tlv(server_resources)
-            return Message(
-                code=CONTENT,
-                payload=payload,
-                content_format=LWM2M_TLV,
-            )
-        
-        # Inne formaty nie obsługujemy
-        print("DEBUG: Nieobsługiwany format accept =", accept)
+        # READ - nie obsługujemy
+        print("DEBUG: READ operation - zwracam 4.06 Not Acceptable")
         return Message(code=aiocoap.NOT_ACCEPTABLE)
 
 
@@ -229,19 +194,8 @@ class ServerInstanceResource(aiocoap_resource.Resource):
                 content_format=APPLICATION_LINK_FORMAT,
             )
         
-        # READ całej instancji w TLV
-        if accept is None or accept == LWM2M_TLV:
-            print("DEBUG: READ operation - zwracam instancję /1/1 w TLV")
-            server_resources = get_all_server_resources()
-            payload = build_server_instance_tlv(server_resources)
-            return Message(
-                code=CONTENT,
-                payload=payload,
-                content_format=LWM2M_TLV,
-            )
-        
-        # Inne formaty nie obsługujemy
-        print("DEBUG: Nieobsługiwany format accept =", accept)
+        # READ całej instancji - nie obsługujemy
+        print("DEBUG: READ operation - zwracam 4.06 Not Acceptable")
         return Message(code=aiocoap.NOT_ACCEPTABLE)
 
 
@@ -291,19 +245,8 @@ class DeviceObjectResource(aiocoap_resource.Resource):
                 content_format=APPLICATION_LINK_FORMAT,
             )
         
-        # READ - zwracamy instancję w TLV
-        if accept is None or accept == LWM2M_TLV:
-            print("DEBUG: READ operation - zwracam instancję /3/0 w TLV")
-            device_resources = get_all_device_resources()
-            payload = build_device_instance_tlv(device_resources)
-            return Message(
-                code=CONTENT,
-                payload=payload,
-                content_format=LWM2M_TLV,
-            )
-        
-        # Inne formaty nie obsługujemy
-        print("DEBUG: Nieobsługiwany format accept =", accept)
+        # READ - serwer powinien czytać pojedyncze zasoby
+        print("DEBUG: READ operation - zwracam 4.06 Not Acceptable (use DISCOVER or read individual resources)")
         return Message(code=aiocoap.NOT_ACCEPTABLE)
 
 
@@ -328,19 +271,8 @@ class DeviceInstanceResource(aiocoap_resource.Resource):
                 content_format=APPLICATION_LINK_FORMAT,
             )
 
-        # READ całej instancji w TLV
-        if accept is None or accept == LWM2M_TLV:
-            print("DEBUG: READ operation - zwracam instancję /3/0 w TLV")
-            device_resources = get_all_device_resources()
-            payload = build_device_instance_tlv(device_resources)
-            return Message(
-                code=CONTENT,
-                payload=payload,
-                content_format=LWM2M_TLV,
-            )
-        
-        # Inne formaty nie obsługujemy
-        print("DEBUG: Nieobsługiwany format accept =", accept)
+        # READ całej instancji - nie obsługujemy
+        print("DEBUG: READ operation - zwracam 4.06 Not Acceptable (read individual resources)")
         return Message(code=aiocoap.NOT_ACCEPTABLE)
 
 
